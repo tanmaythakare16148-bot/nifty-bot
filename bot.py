@@ -9,7 +9,7 @@ app = Flask(__name__)
 SYMBOLS = {
     "NIFTY": "^NSEI",
     "BANKNIFTY": "^NSEBANK",
-    "FINNIFTY": "^CNXFINANCE"
+    "FINNIFTY": "^NSCEI"
 }
 
 def get_scalar(series_or_df):
