@@ -2,7 +2,7 @@ import telebot, requests, threading, time
 from flask import Flask
 import os
 
-BOT_TOKEN = "8539175413:AAE5z7-3Q5q8g1a7Gq0c2v9XyZ123456789"
+BOT_TOKEN = 8539175413:AAFc4sV-T-BsrJqwnNkgnJJ9v2rVrsd2Ugk""
 bot = telebot.TeleBot(BOT_TOKEN)
 
 GREEN_TOP, GREEN_BOTTOM = 23590, 23540
