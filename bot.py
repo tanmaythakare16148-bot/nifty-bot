@@ -1,79 +1,81 @@
-import os, telebot, threading, time, requests, yfinance as yf
+import os, telebot, threading, yfinance as yf
+import pandas as pd
 from flask import Flask
-from datetime import datetime
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN","").strip()
-if not BOT_TOKEN:
-    BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN","").strip()
-
+BOT_TOKEN = os.environ.get("BOT_TOKEN","").strip() or os.environ.get("TELEGRAM_TOKEN","").strip()
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
-CHAT_IDS = set()
-LAST_OI = {}
 
 SYMBOLS = {
     "NIFTY": "^NSEI",
     "BANKNIFTY": "^NSEBANK",
     "FINNIFTY": "NIFTY_FIN_SERVICE.NS"
 }
-headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/"}
+
+def get_scalar(series_or_df):
+    """Series error ka permanent fix"""
+    val = series_or_df
+    # Agar Series hai to uska pehla value le lo
+    if isinstance(val, pd.Series):
+        val = val.iloc[0]
+    # Agar abhi bhi list/array jaisa hai
+    try:
+        return float(val)
+    except:
+        return float(str(val).replace(',', ''))
 
 def get_data(symbol):
     try:
-        # Market band hone par 1d data lo, warna 5m
-        df = yf.download(symbol, period="1d", interval="5m", progress=False)
-        if df is None or len(df) < 10:
-            df = yf.download(symbol, period="5d", interval="15m", progress=False)
-        if df is None or len(df) < 5:
-            df = yf.download(symbol, period="1mo", interval="1d", progress=False)
+        df = yf.download(symbol, period="1mo", interval="1d", progress=False, auto_adjust=True)
+        if df is None or len(df) == 0:
+            return None
+        # Naye yfinance me column MultiIndex hota hai - isko flat karo
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
         return df
     except Exception as e:
-        print(f"{symbol} error: {e}")
+        print(f"Data error {symbol}: {e}")
         return None
 
-def analyze_symbol(name, symbol_code):
-    df = get_data(symbol_code)
-    if df is None or len(df) == 0:
-        return f"❌ {name} chart error - kal 9:15 pe try karo"
-    
+def analyze_symbol(name, code):
+    df = get_data(code)
+    if df is None or len(df) < 2:
+        return f"❌ {name} data nahi mila"
     try:
-        close = float(df['Close'].iloc[-1])
-        high = float(df['High'].max())
-        low = float(df['Low'].min())
-        
-        # Simple Green/Red box logic
-        if close > df['Open'].iloc[-1]:
-            return f"✅ {name} {close:.1f} - GREEN BOX ME HAI! Yaha se CALL ka setup dekh. SL {low:.0f}"
+        close = get_scalar(df['Close'].iloc[-1])
+        open_p = get_scalar(df['Open'].iloc[-1])
+        high = get_scalar(df['High'].max())
+        low = get_scalar(df['Low'].min())
+
+        if close > open_p:
+            return f"✅ {name} {close:.1f} - GREEN BOX ME HAI!\n CALL Setup | SL {low:.0f} | TGT {close+80:.0f}"
         else:
-            return f"🔴 {name} {close:.1f} - RED BOX ME HAI! Yaha se PUT ka setup dekh. SL {high:.0f}"
+            return f"🔴 {name} {close:.1f} - RED BOX ME HAI!\n PUT Setup | SL {high:.0f} | TGT {close-80:.0f}"
     except Exception as e:
-        return f"❌ {name} data error: {e}"
+        return f"❌ {name} error: {e}"
 
 @bot.message_handler(commands=['start'])
 def start_cmd(m):
-    CHAT_IDS.add(m.chat.id)
-    bot.reply_to(m, "Bot Live Hai Tanmay! 🚀\n/zones bhej ke zones dekh")
+    bot.reply_to(m, "Bot Live Hai Tanmay! 🚀\n/zones bhej ke zones dekh\nSubah 9:15 baje auto alert ayega")
 
 @bot.message_handler(commands=['zones'])
 def zones_cmd(m):
-    CHAT_IDS.add(m.chat.id)
-    bot.reply_to(m, "⏳ Checking all...")
-    result = ""
+    bot.reply_to(m, "⏳ Checking all 3 indices...")
+    msg = ""
     for name, code in SYMBOLS.items():
-        result += analyze_symbol(name, code) + "\n\n"
-    bot.send_message(m.chat.id, result)
+        msg += analyze_symbol(name, code) + "\n\n"
+    bot.send_message(m.chat.id, msg)
 
 @app.route('/')
 def home():
-    return "Bot is Running!"
+    return "Bot is Running - Tanmay Edition!"
 
 def polling():
     while True:
         try:
             bot.infinity_polling(timeout=60, long_polling_timeout=60)
         except Exception as e:
-            print(f"Polling error: {e}")
-            time.sleep(5)
+            print(f"Polling restart: {e}")
 
 threading.Thread(target=polling, daemon=True).start()
 
