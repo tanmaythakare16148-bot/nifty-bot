@@ -1,16 +1,24 @@
-import telebot, requests, threading, time
+import os
+import telebot
+import threading
 from flask import Flask
-import 
-BOT_TOKEN = "8539175413:AAG0yZ9_kftviW4AfcXHxlPvouuveOGsfu8"
+
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8539175413:AAG0yZ9_kftviW4AfcXHxlPvouuveOGsfu8")
 bot = telebot.TeleBot(BOT_TOKEN)
-GREEN_TOP, GREEN_BOTTOM = 23590, 23540
-RED_TOP, RED_BOTTOM = 23850, 23800
-last_price = 0
 app = Flask(__name__)
+
 @app.route('/')
 def home():
-    return "Bot LIVE hai Tanmay!"
+    return "NAVA BOT LIVE"
+
 @bot.message_handler(commands=['start'])
 def start(m):
-    bot.reply_to(m, "✅ NAVA BOT LIVE - Render pe!\n\n/zones - Demand/Supply\n/fii - FII DII\n/ltp 23560 - Fake/Real BO\n/oc - Option Chain")
-@bot.message_handler(commands=['zones'])
+    bot.reply_to(m, "Bot Live Hai Tanmay!")
+
+def run_bot():
+    bot.infinity_polling()
+
+if __name__ == "__main__":
+    threading.Thread(target=run_bot, daemon=True).start()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
