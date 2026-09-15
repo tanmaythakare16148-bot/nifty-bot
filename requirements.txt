@@ -1,5 +1,6 @@
-pyTelegramBotAPI
-requests
-Flask
+flask
 yfinance
-pandas
+apscheduler
+python-telegram-bot==20.7
+requests
+lxml
