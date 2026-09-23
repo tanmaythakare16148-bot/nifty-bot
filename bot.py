@@ -1,13 +1,13 @@
-import os, requests
+import os, requests, yfinance as yf, threading
 from flask import Flask
-import yfinance as yf
-from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from apscheduler.schedulers.background import BackgroundScheduler
 
 TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 app_flask = Flask(__name__)
+
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
 
@@ -41,7 +41,7 @@ def check_fii():
         fii = float(r['data'][0]['buyValue']) - float(r['data'][0]['sellValue'])
         dii = float(r['data'][1]['buyValue']) - float(r['data'][1]['sellValue'])
         pcr, vix, nifty = get_data()
-        send(f"🚨 *FII 3:50 PM*\nFII {fii:.0f} Cr {'🟢' if fii>0 else '🔴'} | DII {dii:.0f} Cr\nPCR {pcr:.2f} VIX {vix:.2f} NIFTY {nifty}")
+        send(f"🕞 *FII 3:30 PM*\nFII {fii:.0f} Cr {'🟢' if fii>0 else '🔴'} | DII {dii:.0f} Cr\nPCR {pcr:.2f} VIX {vix:.2f} NIFTY {nifty}")
     except: pass
 
 def check_smc():
@@ -50,17 +50,14 @@ def check_smc():
         if len(df)<30: return
         last = df[-30:]
         curr = float(last['Close'].iloc[-1])
+        ph = float(last['High'].max())
+        pl = float(last['Low'].min())
         pcr, vix, _ = get_data()
-        if vix>16.5: return
+        if vix>18.5: return
         sig=""
-        c = last.iloc[-1]; prev = last.iloc[-2]
-        if (min(c['Open'],c['Close'])-c['Low']) > abs(c['Close']-c['Open'])*2: sig+="🔨 HAMMER 🟢\n"
-        if c['Close']>c['Open'] and prev['Close']<prev['Open'] and c['Close']>prev['Open']: sig+="🟢 Bullish Engulfing\n"
-        if c['Close']<c['Open'] and prev['Close']>prev['Open'] and c['Close']<prev['Open']: sig+="🔴 Bearish Engulfing\n"
-        ph = float(last['High'].iloc[-15:-1].max()); pl = float(last['Low'].iloc[-15:-1].min())
-        if curr>ph: sig+=f"💥 BOS {ph:.0f} toda\n"
+        if curr>ph: sig+=f"🚀 BOS {ph:.0f} toda\n"
         if curr<pl: sig+=f"⚠️ CHOCH {pl:.0f} toda\n"
-        if sig!="": send(f"🧠 *SMC 15m* {curr:.0f}\n{sig}")
+        if sig!="": send(f"🔔 *SMC 15m* {curr:.0f}\n{sig}")
     except: pass
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -71,12 +68,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def home(): return "BOT LIVE"
 
 sched = BackgroundScheduler()
-sched.add_job(check_fii, 'cron', hour=15, minute=50, day_of_week='mon-fri')
+sched.add_job(check_fii, 'cron', hour=15, minute=30, day_of_week='mon-fri')
 sched.add_job(check_smc, 'cron', minute='*/15', hour='9-15', day_of_week='mon-fri')
 sched.start()
 
 if __name__ == "__main__":
-    import threading
     threading.Thread(target=lambda: app_flask.run(host='0.0.0.0', port=10000), daemon=True).start()
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
