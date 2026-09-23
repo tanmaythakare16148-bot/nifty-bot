@@ -1,6 +1,6 @@
-flask
-yfinance
-apscheduler
 python-telegram-bot==20.7
-requests
-lxml
+Flask==2.3.3
+requests==2.31.0
+yfinance==0.2.31
+pandas==2.1.4
+apscheduler==3.10.4
