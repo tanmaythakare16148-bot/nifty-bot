@@ -1,4 +1,4 @@
-import os, requests, time
+import os, requests, time, yfinance as yf
 from flask import Flask
 from threading import Thread
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -6,11 +6,11 @@ import datetime
 
 app = Flask(__name__)
 @app.route('/')
-def home(): return "V7.1 ANTI-BLOCK LIVE"
+def home(): return "V7.2 YAHOO FALLBACK LIVE"
 @app.route('/send')
 def send_route():
     check_market()
-    return "V7.1 Sent!"
+    return "V7.2 Sent!"
 
 def run_flask():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
@@ -22,98 +22,77 @@ def send_telegram(msg):
     try:
         requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
                       json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=20)
-    except: pass
+    except Exception as e:
+        print(e)
 
-def nse_session():
-    s = requests.Session()
-    s.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.nseindia.com/",
-        "Accept-Language": "en-US,en;q=0.9"
-    })
+def get_nifty_yahoo():
     try:
-        s.get("https://www.nseindia.com", timeout=10)
-        time.sleep(1)
-    except: pass
-    return s
+        df = yf.download("^NSEI", period="1mo", interval="1d", progress=False)
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
+        close = float(last['Close'])
+        high = float(last['High'])
+        low = float(last['Low'])
+        l5h = float(df['High'].tail(5).max())
+        l5l = float(df['Low'].tail(5).min())
+        return close, high, low, float(prev['High']), float(prev['Low']), l5h, l5l
+    except Exception as e:
+        print(f"Yahoo Error {e}")
+        return None
 
-def get_data_with_retry():
-    for attempt in range(3): # 3 baar try karega
+def get_option_pcr():
+    for attempt in range(2):
         try:
-            s = nse_session()
-            r1 = s.get("https://www.nseindia.com/api/historical/indices?indexType=NIFTY%2050&from=01-09-2026&to=24-09-2026", timeout=15).json()
-            hist = r1['data']['indexCloseOnlineRecords'][-20:]
-
-            r2 = s.get("https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY", timeout=15).json()
-
-            r3 = s.get("https://www.nseindia.com/api/allIndices", timeout=15).json()
-            vix = None
-            for it in r3['data']:
-                if it['index']=='INDIA VIX': vix=float(it['last'])
-
-            r4 = s.get("https://www.nseindia.com/api/fiidiiTradeReact", timeout=15).json()
-
-            return hist, r2, vix, r4
-        except Exception as e:
-            print(f"Attempt {attempt+1} fail: {e}")
-            time.sleep(2 + attempt) # 2sec, 3sec, 4sec wait
-    return None, None, None, None
+            s = requests.Session()
+            s.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/"})
+            s.get("https://www.nseindia.com", timeout=10)
+            r = s.get("https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY", timeout=15).json()
+            ce_oi=0; pe_oi=0; top_ce=[]; top_pe=[]
+            for item in r['records']['data']:
+                if 'CE' in item:
+                    ce_oi+=item['CE']['openInterest']
+                    top_ce.append((item['strikePrice'], item['CE']['changeinOpenInterest']))
+                if 'PE' in item:
+                    pe_oi+=item['PE']['openInterest']
+                    top_pe.append((item['strikePrice'], item['PE']['changeinOpenInterest']))
+            pcr = pe_oi/ce_oi if ce_oi>0 else 0
+            top_ce = sorted(top_ce, key=lambda x: x[1], reverse=True)[:1]
+            top_pe = sorted(top_pe, key=lambda x: x[1], reverse=True)[:1]
+            return pcr, top_ce, top_pe
+        except:
+            time.sleep(3)
+    return None, None, None
 
 def check_market():
-    hist, chain, vix, fii_data = get_data_with_retry()
-    if not hist:
-        send_telegram("⚠️ NSE ne IP block kiya hai (Render shared IP). 2 min ruko fir /send dabao. Ye NSE ka daily natak hai, bot sahi hai.")
+    yahoo_data = get_nifty_yahoo()
+    if not yahoo_data:
+        send_telegram("⚠️ Yahoo busy hai, 1 min baad /send dabao")
         return
 
-    closes = [float(x['EOD_CLOSE_INDEX_VAL']) for x in hist]
-    highs = [float(x['EOD_HIGH_INDEX_VAL']) for x in hist]
-    lows = [float(x['EOD_LOW_INDEX_VAL']) for x in hist]
-    close = closes[-1]
-    l5h = max(highs[-5:]); l5l = min(lows[-5:])
+    close, high, low, prev_h, prev_l, l5h, l5l = yahoo_data
+    pcr, top_ce, top_pe = get_option_pcr()
 
-    # FII OPTION RADAR
-    fii_option_msg = "Mix"
-    pcr = 0
-    try:
-        ce_oi = 0; pe_oi = 0; top_ce=[]; top_pe=[]
-        for item in chain['records']['data']:
-            if 'CE' in item:
-                ce_oi += item['CE']['openInterest']
-                top_ce.append((item['strikePrice'], item['CE']['changeinOpenInterest']))
-            if 'PE' in item:
-                pe_oi += item['PE']['openInterest']
-                top_pe.append((item['strikePrice'], item['PE']['changeinOpenInterest']))
-        pcr = pe_oi/ce_oi if ce_oi>0 else 0
-        top_ce = sorted(top_ce, key=lambda x: x[1], reverse=True)[:1]
-        top_pe = sorted(top_pe, key=lambda x: x[1], reverse=True)[:1]
-
+    if pcr:
         if top_pe and top_ce and top_pe[0][1] > top_ce[0][1]*1.3:
-            fii_option_msg = f"🟢 FII PUT ENTRY {top_pe[0][0]}PE (+{top_pe[0][1]/1000:.0f}k) - Support"
+            fii_msg = f"🟢 FII PUT ENTRY {top_pe[0][0]}PE (+{top_pe[0][1]/1000:.0f}k OI)"
         elif top_ce and top_pe and top_ce[0][1] > top_pe[0][1]*1.3:
-            fii_option_msg = f"🔴 FII CALL ENTRY {top_ce[0][0]}CE (+{top_ce[0][1]/1000:.0f}k) - Resistance"
+            fii_msg = f"🔴 FII CALL ENTRY {top_ce[0][0]}CE (+{top_ce[0][1]/1000:.0f}k OI)"
         else:
-            fii_option_msg = f"⚖️ Mix CE {top_ce[0][0]} PE {top_pe[0][0]}"
-    except: pass
+            fii_msg = f"⚖️ Mix CE {top_ce[0][0]} PE {top_pe[0][0]}" if top_ce else "Option Mix"
+        pcr_text = f"PCR {pcr:.2f} {'Oversold' if pcr>1.2 else 'Overbought' if pcr<0.8 else 'Neutral'}"
+    else:
+        fii_msg = "Option Chain NSE busy - Yahoo price se kaam chal raha hai"
+        pcr_text = "PCR N/A (NSE block)"
 
-    try:
-        fii_cash = float(fii_data[0]['buyValue']) - float(fii_data[0]['sellValue'])
-        dii_cash = float(fii_data[1]['buyValue']) - float(fii_data[1]['sellValue'])
-        fii_text = f"FII {fii_cash/100:.0f}Cr | DII {dii_cash/100:.0f}Cr"
-    except: fii_text = "FII Data Wait"
+    liq = f"🔥 SSL {l5l:.0f} Sweep Watch" if close<=l5l+30 else f"🔥 BSL {l5h:.0f} Sweep Watch" if close>=l5h-30 else f"Range H{l5h:.0f} L{l5l:.0f}"
 
-    pcr_text = f"PCR {pcr:.2f}"
-    vix_text = f"VIX {vix:.1f}" if vix else "VIX N/A"
-    liq = f"SSL {l5l:.0f} Sweep" if close<=l5l+30 else f"BSL {l5h:.0f} Sweep" if close>=l5h-30 else f"Range"
-
-    msg = f"📊 *V7.1 FIXED - FII RADAR*\n\n💰 {fii_text}\n📈 {pcr_text} | {vix_text}\nNIFTY {close:.0f} | {liq}\n\n🎯 {fii_option_msg}\n\n⏰ {datetime.datetime.now().strftime('%d-%m %I:%M %p')}"
+    msg = f"📊 *V7.2 WORKING - NO BLOCK*\n\n💰 NIFTY {close:.0f} | {pcr_text}\n{liq}\nPrev H {prev_h:.0f} L {prev_l:.0f}\n\n🎯 *FII RADAR:*\n{fii_msg}\n\n✅ Yahoo se hai isliye block nahi hoga.\n\n⏰ {datetime.datetime.now().strftime('%d-%m %I:%M %p')}"
     send_telegram(msg)
 
 if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
     scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
     scheduler.add_job(check_market, 'cron', hour=9, minute=20, day_of_week='mon-fri')
-    scheduler.add_job(check_market, 'cron', hour=11, minute=30, day_of_week='mon-fri')
     scheduler.add_job(check_market, 'cron', hour=14, minute=45, day_of_week='mon-fri')
     scheduler.start()
     check_market()
