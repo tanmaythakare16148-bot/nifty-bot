@@ -25,22 +25,15 @@ def send_telegram(msg):
     except: pass
 
 def get_nifty_direct():
-    # Yahoo ka direct API - yfinance se zyada stable hai
     try:
         url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?range=1mo&interval=1d"
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15).json()
         result = r['chart']['result'][0]
-        closes = result['indicators']['quote'][0]['close']
-        highs = result['indicators']['quote'][0]['high']
-        lows = result['indicators']['quote'][0]['low']
-
-        # last valid close
-        closes = [c for c in closes if c is not None]
-        highs = [h for h in highs if h is not None]
-        lows = [l for l in lows if l is not None]
+        closes = [c for c in result['indicators']['quote'][0]['close'] if c is not None]
+        highs = [h for h in result['indicators']['quote'][0]['high'] if h is not None]
+        lows = [l for l in result['indicators']['quote'][0]['low'] if l is not None]
 
         close = closes[-1]
-        prev_close = closes[-2]
         l5h = max(highs[-5:])
         l5l = min(lows[-5:])
         prev_h = highs[-2]
@@ -53,13 +46,12 @@ def get_nifty_direct():
 def check_market():
     data = get_nifty_direct()
     if not data:
-        send_telegram("⚠️ Yahoo direct bhi fail. Market band hai isliye. Kal 9:20 AM ko auto chalega. Abhi tension mat le, bot sahi hai.")
+        send_telegram("⚠️ Yahoo fail. Kal 9:20 AM auto chalega.")
         return
 
     close, prev_h, prev_l, l5h, l5l = data
 
-    # Option chain try karo, fail hua to bhi NIFTY to ayega hi
-    pcr_text = "PCR: Market band hai (6 PM ke baad NSE band)"
+    pcr_text = "PCR: Market band (6PM ke baad NSE band)"
     fii_msg = "Kal FII entry dikhayega"
     try:
         s = requests.Session()
@@ -75,9 +67,11 @@ def check_market():
         pcr_text = f"PCR {pcr:.2f}"
     except: pass
 
-    liq = f"SSL {l5l:.0f} Sweep Watch" if close<=l5l+15 else f"BSL {l5h:.0f} Sweep" if close>=l5h-15 else f"Range {l5l:.0f}-{l5h:.0f}"
+    liq = f"🔥 SSL {l5l:.0f} Sweep Watch" if close<=l5l+15 else f"🔥 BSL {l5h:.0f} Sweep" if close>=l5h-15 else f"Range {l5l:.0f}-{l5h:.0f}"
 
-    msg = f"📊 *V7.3 FINAL - WORKING*\n\n💰 NIFTY {close:.0f} | {pcr_text}\n{liq}\nPrev H {prev_h:.0f} L {prev_l:.0f}\n\n🎯 {fii_msg}\n\n✅ Ab NSE block ka issue khatam. Kal 9:20 AM auto ayega.\n⏰ {datetime.datetime.now().strftime('%d-%m %I:%M %p')}"
+    ist = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+
+    msg = f"📊 *V7.3 FINAL - WORKING*\n\n💰 NIFTY {close:.0f} | {pcr_text}\n{liq}\nPrev H {prev_h:.0f} L {prev_l:.0f}\n\n🎯 {fii_msg}\n\n✅ NSE block khatam. Kal 9:20 AM auto ayega.\n⏰ {ist.strftime('%d-%m %I:%M %p')}"
     send_telegram(msg)
 
 if __name__ == "__main__":
