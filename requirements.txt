@@ -1,6 +1,4 @@
-Flask==2.3.3
-APScheduler==3.10.4
-yfinance==0.2.38
+Flask
 requests
-pandas
-pytz
+apscheduler
+yfinance
