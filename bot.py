@@ -6,11 +6,11 @@ import datetime
 
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Bot LIVE - NSE Direct"
+def home(): return "V7 FII OPTION RADAR LIVE"
 @app.route('/send')
 def send_route():
     check_market()
-    return "Sent!"
+    return "V7 Sent!"
 
 def run_flask():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
@@ -21,96 +21,104 @@ CHAT_ID = os.getenv("CHAT_ID")
 def send_telegram(msg):
     try:
         requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                      json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
+                      json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=20)
     except: pass
 
-def get_nifty_nse():
+def get_all_data():
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Referer": "https://www.nseindia.com/"
-        }
-        s = requests.Session()
-        # cookie lene ke liye
-        s.get("https://www.nseindia.com", headers=headers, timeout=10)
-        r = s.get("https://www.nseindia.com/api/allIndices", headers=headers, timeout=10).json()
-        for item in r['data']:
-            if item['index'] == 'NIFTY 50':
-                last = float(item['last'])
-                high = float(item.get('high', last))
-                low = float(item.get('low', last))
-                prev_high = float(item.get('previousClose', last)) # fallback
-                # NSE allIndices me 5D high nahi deta, to aaj ka high/low se hi sweep check karenge
-                # thoda logic change
-                return last, last*1.005, last*0.995, high, low # last, prevH, prevL, 5D high, 5D low ka jugaad
-        return None
-    except Exception as e:
-        print(f"NSE Error {e}")
-        return None
-
-def get_nifty_history_nse():
-    # Better history - Nifty 50 ke liye daily high low
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://www.nseindia.com/"
-        }
+        headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.nseindia.com/"}
         s = requests.Session()
         s.get("https://www.nseindia.com", headers=headers, timeout=10)
-        # last 5 days ka data
-        url = "https://www.nseindia.com/api/historical/indices?indexType=NIFTY%2050&from=01-09-2026&to=24-09-2026"
-        r = s.get(url, headers=headers, timeout=10).json()
-        data = r['data']['indexCloseOnlineRecords']
-        closes = [float(x['EOD_CLOSE_INDEX_VAL']) for x in data]
-        highs = [float(x['EOD_HIGH_INDEX_VAL']) for x in data]
-        lows = [float(x['EOD_LOW_INDEX_VAL']) for x in data]
-        last = closes[-1]
-        last_5_high = max(highs[-5:])
-        last_5_low = min(lows[-5:])
-        prev_high = highs[-2]
-        prev_low = lows[-2]
-        return last, prev_high, prev_low, last_5_high, last_5_low
+        # 1. History
+        r1 = s.get("https://www.nseindia.com/api/historical/indices?indexType=NIFTY%2050&from=01-09-2026&to=24-09-2026", headers=headers, timeout=15).json()
+        hist = r1['data']['indexCloseOnlineRecords'][-20:]
+        # 2. PCR + Option Chain
+        r2 = s.get("https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY", headers=headers, timeout=15).json()
+        # 3. VIX
+        r3 = s.get("https://www.nseindia.com/api/allIndices", headers=headers, timeout=10).json()
+        vix = None
+        for it in r3['data']:
+            if it['index']=='INDIA VIX': vix=float(it['last'])
+        # 4. FII DII
+        r4 = s.get("https://www.nseindia.com/api/fiidiiTradeReact", headers=headers, timeout=10).json()
+        return hist, r2, vix, r4
     except Exception as e:
-        print(f"History Error {e}")
-        return get_nifty_nse()
+        print(f"Data Error {e}")
+        return None, None, None, None
 
 def check_market():
-    data = get_nifty_history_nse()
-    if not data:
-        send_telegram("⚠️ NSE bhi busy hai, 30 sec baad /send dabao")
+    hist, chain, vix, fii_data = get_all_data()
+    if not hist:
+        send_telegram("⚠️ NSE busy hai, 30 sec baad /send dabao")
         return
 
-    close, prev_day_high, prev_day_low, last_5_high, last_5_low = data
+    closes = [float(x['EOD_CLOSE_INDEX_VAL']) for x in hist]
+    highs = [float(x['EOD_HIGH_INDEX_VAL']) for x in hist]
+    lows = [float(x['EOD_LOW_INDEX_VAL']) for x in hist]
+    close = closes[-1]
+    l5h = max(highs[-5:]); l5l = min(lows[-5:])
 
-    # Liquidity Sweep Check
-    if close >= last_5_high - 20: # near high
-        liq = f"🔥 *BSL Liquidity* {last_5_high:.0f} ke paas hai - Upar SL pade hain. Fake breakout ho sakta hai!"
-        signal = f"⚠️ NIFTY {close:.0f} 5D High {last_5_high:.0f} ke paas - *SWEEP WATCH*"
-    elif close <= last_5_low + 20:
-        liq = f"🔥 *SSL Liquidity* {last_5_low:.0f} ke paas hai - Neeche SL pade hain. Fake breakdown ho sakta hai!"
-        signal = f"⚠️ NIFTY {close:.0f} 5D Low {last_5_low:.0f} ke paas - *SWEEP WATCH*"
-    else:
-        liq = f"5D High {last_5_high:.0f} | Low {last_5_low:.0f} - Liquidity zones"
-        signal = f"➡️ NIFTY {close:.0f} Range me | Prev H {prev_day_high:.0f} L {prev_day_low:.0f}"
-
-    # FII
+    # --- FII OPTION ENTRY RADAR ---
+    fii_option_msg = "FII Option: Data wait"
+    pcr = 0
     try:
-        s = requests.Session()
-        s.get("https://www.nseindia.com", headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
-        r = s.get("https://www.nseindia.com/api/fiidiiTradeReact", headers={"User-Agent": "Mozilla/5.0"}, timeout=10).json()
-        fii = float(r[0]['buyValue']) - float(r[0]['sellValue'])
-        fii_text = f"FII: {fii/100:.0f}Cr {'BUY' if fii>0 else 'SELL'}"
-    except:
-        fii_text = "FII: Data off today"
+        ce_oi = 0; pe_oi = 0
+        top_ce = []; top_pe = []
+        for item in chain['records']['data']:
+            if 'CE' in item:
+                ce_oi += item['CE']['openInterest']
+                top_ce.append((item['strikePrice'], item['CE']['openInterest'], item['CE']['changeinOpenInterest']))
+            if 'PE' in item:
+                pe_oi += item['PE']['openInterest']
+                top_pe.append((item['strikePrice'], item['PE']['openInterest'], item['PE']['changeinOpenInterest']))
 
-    msg = f"📊 *MASTER BOT - NSE DIRECT + LIQUIDITY*\n\n💰 {fii_text}\n\n{signal}\n\n🧠 {liq}\n\n📍 Levels: Prev H {prev_day_high:.0f} L {prev_day_low:.0f}\n⏰ {datetime.datetime.now().strftime('%d-%m %I:%M %p')}"
+        pcr = pe_oi/ce_oi if ce_oi>0 else 0
+
+        # Sabse zyada OI Change jaha hua = FII Entry
+        top_ce_sorted = sorted(top_ce, key=lambda x: x[2], reverse=True)[:2]
+        top_pe_sorted = sorted(top_pe, key=lambda x: x[2], reverse=True)[:2]
+
+        ce_entry = f"{top_ce_sorted[0][0]}CE (+{top_ce_sorted[0][2]/1000:.0f}k OI)" if top_ce_sorted else ""
+        pe_entry = f"{top_pe_sorted[0][0]}PE (+{top_pe_sorted[0][2]/1000:.0f}k OI)" if top_pe_sorted else ""
+
+        if top_ce_sorted[0][2] > top_pe_sorted[0][2] * 1.5:
+            fii_option_msg = f"🔴 *FII CALL SELLING ENTRY* {ce_entry} pe - Upar rok rahe hain!"
+        elif top_pe_sorted[0][2] > top_ce_sorted[0][2] * 1.5:
+            fii_option_msg = f"🟢 *FII PUT SELLING / CALL BUYING* {pe_entry} pe - Neeche support de rahe hain! Tezi"
+        else:
+            fii_option_msg = f"⚖️ FII Mix - CE {ce_entry} | PE {pe_entry}"
+
+    except Exception as e:
+        print(e)
+
+    # FII Cash
+    try:
+        fii_cash = float(fii_data[0]['buyValue']) - float(fii_data[0]['sellValue'])
+        dii_cash = float(fii_data[1]['buyValue']) - float(fii_data[1]['sellValue'])
+        fii_text = f"FII {fii_cash/100:.0f}Cr {'BUY' if fii_cash>0 else 'SELL'} | DII {dii_cash/100:.0f}Cr"
+    except:
+        fii_text = "FII N/A"
+
+    pcr_text = f"PCR {pcr:.2f} {'Oversold' if pcr>1.2 else 'Overbought' if pcr<0.8 else 'Neutral'}" if pcr else "PCR N/A"
+    vix_text = f"VIX {vix:.1f}" if vix else "VIX N/A"
+    liq = f"BSL {l5h:.0f}" if close>=l5h-30 else f"SSL {l5l:.0f}" if close<=l5l+30 else f"Range H{l5h:.0f} L{l5l:.0f}"
+
+    # Patterns (short)
+    pat = []
+    if abs(highs[-1]-highs[-2])<40 and close>=l5h-30: pat.append("Double Top")
+    if abs(lows[-1]-lows[-2])<40 and close<=l5l+30: pat.append("Double Bottom")
+    if closes[-1]>closes[-2] and closes[-2]<closes[-3]: pat.append("Hammer/Bullish")
+
+    final_pat = ", ".join(pat) if pat else "Range"
+
+    msg = f"📊 *V7 FII OPTION RADAR*\n\n💰 {fii_text}\n📈 {pcr_text} | {vix_text}\nNIFTY {close:.0f} | {liq}\n\n🎯 *FII LIVE ENTRY:*\n{fii_option_msg}\n\n🕯️ Pattern: {final_pat}\n\n⏰ {datetime.datetime.now().strftime('%d-%m %I:%M %p')}\n\n⚡ Matlab: FII jaha OI badha raha hai, wahi SL rakh ke trade lo!"
     send_telegram(msg)
 
 if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
     scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
     scheduler.add_job(check_market, 'cron', hour=9, minute=20, day_of_week='mon-fri')
+    scheduler.add_job(check_market, 'cron', hour=11, minute=30, day_of_week='mon-fri')
     scheduler.add_job(check_market, 'cron', hour=14, minute=45, day_of_week='mon-fri')
     scheduler.start()
     check_market()
