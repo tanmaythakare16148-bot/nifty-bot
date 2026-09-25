@@ -4,8 +4,8 @@ import time
 from datetime import datetime
 
 # --- CONFIG ---
-TELEGRAM_TOKEN = "APNA_NAYA_TOKEN_YAHAN_DALO"  # @BotFather wala naya token
-CHAT_ID = "APNA_CHAT_ID_YAHAN_DALO"  # getUpdates wala ID
+TELEGRAM_TOKEN = "8539175413:AAHwlAKAcdpHuPTNh3uK1s5f7-hrX-cP44Q"  # @BotFather wala naya token
+CHAT_ID = "809517300"  # getUpdates wala ID
 PAIR = "GC=F" # Gold Futures - XAUUSD ke liye
 
 def send_telegram(msg):
